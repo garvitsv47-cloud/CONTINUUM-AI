@@ -40,9 +40,28 @@ type Project = {
   repository_url: string
   status: string
   analysis?: Analysis | null
+  isDemo?: boolean
 }
 
 const initialForm = { name: '', description: '', repository_url: '' }
+const demoProjectsStorageKey = 'continuum-demo-projects'
+
+function readDemoProjects(): Project[] {
+  try {
+    const stored = window.localStorage.getItem(demoProjectsStorageKey)
+    if (!stored) return []
+    const projects = JSON.parse(stored)
+    return Array.isArray(projects)
+      ? projects.map((project) => ({ ...project, isDemo: true }))
+      : []
+  } catch {
+    return []
+  }
+}
+
+function saveDemoProjects(projects: Project[]) {
+  window.localStorage.setItem(demoProjectsStorageKey, JSON.stringify(projects))
+}
 
 export default function Projects() {
   const [projects, setProjects] = useState<Project[]>([])
@@ -52,13 +71,18 @@ export default function Projects() {
   const [isSaving, setIsSaving] = useState(false)
   const [analyzingId, setAnalyzingId] = useState<string | null>(null)
   const [error, setError] = useState('')
+  const [storageUnavailable, setStorageUnavailable] = useState(false)
+  const [demoMode, setDemoMode] = useState(false)
   const [copied, setCopied] = useState(false)
 
   useEffect(() => {
     fetch(apiUrl('/api/projects/'))
       .then((response) => readJsonResponse<{ projects: Project[] }>(response))
-      .then((data) => setProjects(data.projects))
-      .catch(() => setError('Unable to load projects. Check that the backend is running.'))
+      .then((data) => setProjects(data.projects.map((project) => ({ ...project, isDemo: false }))))
+      .catch(() => {
+        setStorageUnavailable(true)
+        setProjects(readDemoProjects())
+      })
       .finally(() => setIsLoading(false))
   }, [])
 
@@ -73,6 +97,24 @@ export default function Projects() {
     }
     setIsSaving(true)
     setError('')
+    if (demoMode) {
+      const demoProject: Project = {
+        id: `demo-${Date.now()}`,
+        name: form.name.trim(),
+        description: form.description.trim(),
+        repository_url: form.repository_url.trim(),
+        status: 'demo',
+        analysis: null,
+        isDemo: true,
+      }
+      const demoProjects = [demoProject, ...readDemoProjects()]
+      saveDemoProjects(demoProjects)
+      setProjects((current) => [demoProject, ...current.filter((project) => !project.isDemo)])
+      setForm(initialForm)
+      setShowForm(false)
+      setIsSaving(false)
+      return
+    }
     try {
       const response = await fetch(apiUrl('/api/projects/'), {
         method: 'POST',
@@ -95,6 +137,11 @@ export default function Projects() {
   }
 
   const analyze = async (projectId: string) => {
+    const project = projects.find((item) => item.id === projectId)
+    if (project?.isDemo) {
+      setError('Demo projects are local only and cannot be analyzed without backend storage.')
+      return
+    }
     setAnalyzingId(projectId)
     setError('')
     try {
@@ -168,14 +215,20 @@ export default function Projects() {
           </div>
           <button
             type="button"
-            onClick={() => { setError(''); setShowForm(true) }}
+            onClick={() => { setError(''); setDemoMode(false); setShowForm(true) }}
             className="inline-flex items-center gap-2 rounded-lg bg-[var(--action)] px-4 py-2.5 font-semibold text-white hover:bg-[var(--action-hover)]"
           >
             <Plus size={17} /> Connect repository
           </button>
         </div>
 
-        {error && (
+        {storageUnavailable && (
+          <div className="mb-6 rounded-lg border border-[#d8c8a9] bg-[#fbf8f1] px-4 py-3 text-sm text-[var(--warning)]">
+            Project storage is temporarily unavailable. You can still explore the demo.
+          </div>
+        )}
+
+        {error && !storageUnavailable && (
           <p role="alert" className="mb-6 rounded-lg border border-[#d9b8b8] bg-[#fbf3f3] px-4 py-3 text-sm text-[var(--error)]">
             {error}
           </p>
@@ -186,7 +239,9 @@ export default function Projects() {
             <div className="mb-6 flex items-start justify-between">
               <div>
                 <h2 className="text-xl font-semibold">Connect a repository</h2>
-                <p className="mt-1 text-sm text-[var(--text-secondary)]">Analysis remains evidence-first and reviewable.</p>
+                <p className="mt-1 text-sm text-[var(--text-secondary)]">
+                  {demoMode ? 'DEMO MODE stores project details only in this browser.' : 'Analysis remains evidence-first and reviewable.'}
+                </p>
               </div>
               <button type="button" onClick={() => setShowForm(false)} aria-label="Close form" className="text-[var(--text-secondary)] hover:text-[var(--text-primary)]">
                 <X size={19} />
@@ -203,9 +258,13 @@ export default function Projects() {
                 <textarea id="description" value={form.description} onChange={(event) => updateForm('description', event.target.value)} placeholder="What should the next engineer know?" rows={3} className="field-control resize-y" />
               </Field>
             </div>
+            <label className="mt-5 flex items-center gap-3 text-sm text-[var(--text-secondary)]">
+              <input type="checkbox" checked={demoMode} onChange={(event) => setDemoMode(event.target.checked)} />
+              <span><span className="font-semibold text-[var(--text-primary)]">DEMO MODE</span> — save locally without backend storage</span>
+            </label>
             <button type="submit" disabled={isSaving} className="mt-5 inline-flex items-center gap-2 rounded-lg bg-[var(--action)] px-5 py-3 font-semibold text-white hover:bg-[var(--action-hover)] disabled:cursor-not-allowed disabled:opacity-50">
               {isSaving && <LoaderCircle size={16} className="animate-spin" />}
-              {isSaving ? 'Connecting...' : 'Connect project'}
+              {isSaving ? 'Saving...' : demoMode ? 'Save demo project' : 'Connect project'}
             </button>
           </form>
         )}
@@ -217,6 +276,11 @@ export default function Projects() {
             <FolderKanban size={36} className="mx-auto mb-4 text-[var(--text-secondary)]" />
             <h2 className="text-xl font-semibold">No projects connected</h2>
             <p className="mx-auto mt-2 max-w-md text-sm text-[var(--text-secondary)]">Connect a repository to reconstruct its architecture, risks, and ownership context.</p>
+            {storageUnavailable && (
+              <button type="button" onClick={() => { setDemoMode(true); setShowForm(true) }} className="mt-5 rounded-lg border border-[var(--border-subtle)] px-4 py-2.5 text-sm font-semibold text-[var(--action)] hover:bg-[var(--surface-muted)]">
+                Try DEMO MODE
+              </button>
+            )}
           </div>
         ) : (
           <div className="grid gap-5 lg:grid-cols-2">
@@ -233,7 +297,7 @@ export default function Projects() {
                     </div>
                   </div>
                   <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-medium capitalize ${project.status === 'analyzed' ? 'bg-[#edf5f1] text-[var(--success)]' : 'bg-[var(--surface-muted)] text-[var(--text-secondary)]'}`}>
-                    {project.status}
+                    {project.isDemo ? 'DEMO ONLY' : project.status}
                   </span>
                 </div>
                 <p className="mt-5 text-sm leading-6 text-[var(--text-secondary)]">{project.description || 'No transition context added yet.'}</p>
