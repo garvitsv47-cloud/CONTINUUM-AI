@@ -25,7 +25,7 @@ The application builds and the existing local API workflow is intact. Projects a
 | Ignore rules | PASS | `.env`, virtual environments, `node_modules`, build output, caches, keys, and local tooling are ignored. |
 | GitHub ingestion | PASS | Public GitHub URL validation, source ingestion, file limits, exclusions, and evidence generation are implemented and tested. |
 | Gemini live analysis | REQUIRE CONFIGURATION | Integration and mocked tests exist, but a real `GEMINI_API_KEY` is required for a live request. |
-| Persistence | DEMO LIMITATION | Projects reset when the backend process restarts. |
+| Persistence | CONFIGURED | Projects and completed analyses use Supabase PostgreSQL through `DATABASE_URL`; run the persistence tests and verify the Render environment before release. |
 | Auth/private repositories | NOT IMPLEMENTED | Only public GitHub repositories are supported. |
 
 ## Required deployment environment variables
@@ -43,6 +43,7 @@ Set:
 ```text
 GEMINI_API_KEY=<real Gemini API key>
 CORS_ORIGINS=https://<your-vercel-domain>
+DATABASE_URL=postgresql://<user>:<password>@<supabase-host>:5432/<database>?sslmode=require
 ```
 
 For a preview deployment, include each exact allowed origin as a comma-separated value:
@@ -73,7 +74,7 @@ python -m pip install -r requirements.txt
 uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}
 ```
 
-Set `GEMINI_API_KEY` and `CORS_ORIGINS` in the backend provider's secret/environment settings, not in source control.
+Set `GEMINI_API_KEY`, `CORS_ORIGINS`, and `DATABASE_URL` in the backend provider's secret/environment settings, not in source control.
 
 Verify:
 
@@ -88,5 +89,5 @@ GET https://<your-backend-domain>/api/health
   deployed backend.
 - `CORS_ORIGINS` is only required for direct cross-origin browser requests.
   The Vercel rewrite keeps production browser requests same-origin.
-- Replace in-memory project storage before treating the service as production-grade.
+- Configure and verify the Supabase schema before treating persistence as production-ready.
 - Add authentication and private repository support if required.

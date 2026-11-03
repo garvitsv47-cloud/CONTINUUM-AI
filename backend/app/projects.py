@@ -14,6 +14,11 @@ from app.gemini_analysis import (
     GeminiConfigurationError,
     GeminiRequestError,
 )
+from app.project_store import (
+    ProjectStore,
+    ProjectStoreConfigurationError,
+    ProjectStoreError,
+)
 
 router = APIRouter(prefix="/api/projects", tags=["Projects"])
 
@@ -64,32 +69,53 @@ class Analysis(BaseModel):
     analyzed_at: str
 
 
-projects: list[Project] = []
+project_store: ProjectStore = ProjectStore()
+
+
+def configure_project_store(store: ProjectStore) -> None:
+    global project_store
+    project_store = store
 
 
 def _find_project(project_id: str) -> Project:
-    project = next((item for item in projects if item.id == project_id), None)
-    if project is None:
+    try:
+        stored_project = project_store.get(project_id)
+    except ProjectStoreConfigurationError as error:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(error)) from error
+    except ProjectStoreError as error:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(error)) from error
+    if stored_project is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
-    return project
+    return Project.model_validate(stored_project)
 
 
 @router.post("/")
 def create_project(payload: ProjectCreate):
-    project = Project(
-        id=str(uuid4()),
-        name=payload.name,
-        description=payload.description,
-        repository_url=str(payload.repository_url),
-        status="connected",
-        created_at=datetime.now(timezone.utc).isoformat(),
-    )
-    projects.append(project)
+    project_data = {
+        "id": str(uuid4()),
+        "name": payload.name,
+        "description": payload.description,
+        "repository_url": str(payload.repository_url),
+        "status": "connected",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    try:
+        project = Project.model_validate(project_store.create(project_data))
+    except ProjectStoreConfigurationError as error:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(error)) from error
+    except ProjectStoreError as error:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(error)) from error
     return {"message": "Project connected successfully", "project": project}
 
 
 @router.get("/")
 def list_projects():
+    try:
+        projects = [Project.model_validate(item) for item in project_store.list()]
+    except ProjectStoreConfigurationError as error:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(error)) from error
+    except ProjectStoreError as error:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(error)) from error
     return {"projects": projects}
 
 
@@ -107,16 +133,16 @@ def _analyze_project(
     try:
         context = (ingestor or GitHubIngestor()).ingest(project.repository_url)
     except RepositoryIngestionError as error:
-        project.status = "ingestion_failed"
+        _persist_status(project.id, "ingestion_failed")
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)) from error
 
     try:
         ai_analysis = (analyzer or GeminiAnalyzer()).analyze(context)
     except GeminiConfigurationError as error:
-        project.status = "analysis_unavailable"
+        _persist_status(project.id, "analysis_unavailable")
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(error)) from error
     except GeminiRequestError as error:
-        project.status = "analysis_failed"
+        _persist_status(project.id, "analysis_failed")
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)) from error
 
     manifest_names = {
@@ -134,7 +160,6 @@ def _analyze_project(
         item.path for item in context.files
         if "." in item.path and item.path.rsplit(".", 1)[-1].lower() in source_suffixes
     ]
-    project.status = "analyzed"
     analysis = Analysis(
         project_id=project.id,
         status="ready_for_review",
@@ -164,5 +189,19 @@ def _analyze_project(
         knowledge_gaps=ai_analysis.knowledge_gaps,
         analyzed_at=datetime.now(timezone.utc).isoformat(),
     )
-    project.analysis = analysis.model_dump()
+    try:
+        project_store.save_analysis(project.id, analysis.model_dump())
+    except ProjectStoreConfigurationError as error:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(error)) from error
+    except ProjectStoreError as error:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(error)) from error
     return analysis
+
+
+def _persist_status(project_id: str, project_status: str) -> None:
+    try:
+        project_store.update_status(project_id, project_status)
+    except ProjectStoreConfigurationError as error:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(error)) from error
+    except ProjectStoreError as error:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(error)) from error

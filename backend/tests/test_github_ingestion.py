@@ -16,7 +16,29 @@ from app.gemini_analysis import (
     GeminiConfigurationError,
     GeminiRequestError,
 )
-from app.projects import ProjectCreate, _analyze_project, projects
+from app.projects import ProjectCreate, _analyze_project, configure_project_store, create_project
+
+
+class TestProjectStore:
+    def __init__(self):
+        self.projects = {}
+
+    def create(self, project):
+        self.projects[project["id"]] = {**project, "analysis": None}
+        return self.projects[project["id"]]
+
+    def get(self, project_id):
+        return self.projects.get(project_id)
+
+    def update_status(self, project_id, status):
+        self.projects[project_id]["status"] = status
+
+    def save_analysis(self, project_id, analysis):
+        self.projects[project_id]["status"] = "analyzed"
+        self.projects[project_id]["analysis"] = analysis
+
+    def list(self):
+        return list(self.projects.values())
 
 
 class FakeResponse:
@@ -36,6 +58,9 @@ class FakeResponse:
 
 
 class GitHubIngestionTests(unittest.TestCase):
+    def setUp(self):
+        configure_project_store(TestProjectStore())
+
     @staticmethod
     def _gemini_context():
         context = Mock()
@@ -127,13 +152,12 @@ class GitHubIngestionTests(unittest.TestCase):
             GitHubIngestor(opener).ingest("https://github.com/example/missing")
 
     def test_ingestion_failure_does_not_mark_analysis_ready(self):
-        projects.clear()
+        configure_project_store(TestProjectStore())
         project = ProjectCreate(
             name="Demo",
             description="",
             repository_url="https://github.com/example/demo",
         )
-        from app.projects import create_project
         created = create_project(project)["project"]
 
         class FailingIngestor:
@@ -143,10 +167,11 @@ class GitHubIngestionTests(unittest.TestCase):
         from fastapi import HTTPException
         with self.assertRaises(HTTPException):
             _analyze_project(created.id, FailingIngestor(), Mock())
-        self.assertEqual(created.status, "ingestion_failed")
+        from app.projects import project_store
+        self.assertEqual(project_store.get(created.id)["status"], "ingestion_failed")
 
     def test_gemini_response_is_validated_and_evidence_is_checked(self):
-        projects.clear()
+        configure_project_store(TestProjectStore())
         context = Mock()
         context.owner = "example"
         context.name = "demo"
