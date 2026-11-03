@@ -1,6 +1,10 @@
 import json
 import os
+import random
+import time
+from email.utils import parsedate_to_datetime
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
@@ -14,7 +18,11 @@ from app.github_ingestion import RepositoryContext
 DEFAULT_GEMINI_MODEL = "gemini-3.6-flash"
 GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models"
 GEMINI_TIMEOUT_SECONDS = 45
+GEMINI_MAX_RETRIES = 3
+GEMINI_RETRY_BASE_SECONDS = 1.0
+GEMINI_RETRY_MAX_SECONDS = 8.0
 MAX_PROMPT_CHARS = 120_000
+TRANSIENT_GEMINI_STATUS_CODES = {429, 500, 502, 503, 504}
 
 
 class GeminiConfigurationError(Exception):
@@ -64,6 +72,8 @@ class GeminiAnalyzer:
     api_key: str | None = None
     model: str | None = None
     opener: Any = urlopen
+    sleeper: Any = time.sleep
+    jitter: Any = random.uniform
 
     def analyze(self, context: RepositoryContext) -> GeminiRepositoryAnalysis:
         key = self.api_key or os.getenv("GEMINI_API_KEY")
@@ -91,21 +101,7 @@ class GeminiAnalyzer:
             },
             method="POST",
         )
-        try:
-            with self.opener(request, timeout=GEMINI_TIMEOUT_SECONDS) as response:
-                raw = response.read(512 * 1024)
-        except HTTPError as error:
-            if error.code in {401, 403}:
-                raise GeminiRequestError("Gemini rejected the configured API key.") from error
-            if error.code == 429:
-                raise GeminiRequestError("Gemini rate limit reached. Try again later.") from error
-            if error.code == 404:
-                raise GeminiRequestError(
-                    f"Gemini model '{model}' is unavailable for generateContent."
-                ) from error
-            raise GeminiRequestError(f"Gemini request failed ({error.code}).") from error
-        except (URLError, TimeoutError, OSError) as error:
-            raise GeminiRequestError("Gemini could not be reached before the timeout.") from error
+        raw = self._request_with_retries(request, model)
 
         try:
             response = json.loads(raw)
@@ -115,6 +111,50 @@ class GeminiAnalyzer:
             raise GeminiRequestError("Gemini returned an invalid structured analysis.") from error
         self._validate_evidence(result, context)
         return result
+
+    def _request_with_retries(self, request: Request, model: str) -> bytes:
+        for attempt in range(GEMINI_MAX_RETRIES + 1):
+            try:
+                with self.opener(request, timeout=GEMINI_TIMEOUT_SECONDS) as response:
+                    return response.read(512 * 1024)
+            except HTTPError as error:
+                if error.code in TRANSIENT_GEMINI_STATUS_CODES and attempt < GEMINI_MAX_RETRIES:
+                    self.sleeper(self._retry_delay(error, attempt))
+                    continue
+                if error.code in {401, 403}:
+                    raise GeminiRequestError("Gemini rejected the configured API key.") from error
+                if error.code == 404:
+                    raise GeminiRequestError(
+                        f"Gemini model '{model}' is unavailable for generateContent."
+                    ) from error
+                if error.code == 429:
+                    raise GeminiRequestError("Gemini rate limit reached. Try again later.") from error
+                raise GeminiRequestError(f"Gemini request failed ({error.code}).") from error
+            except (URLError, TimeoutError, OSError) as error:
+                raise GeminiRequestError("Gemini could not be reached before the timeout.") from error
+        raise GeminiRequestError("Gemini request retry limit reached.")
+
+    def _retry_delay(self, error: HTTPError, attempt: int) -> float:
+        retry_after = error.headers.get("Retry-After") if error.headers else None
+        if retry_after:
+            try:
+                return max(0.0, min(float(retry_after), GEMINI_RETRY_MAX_SECONDS))
+            except ValueError:
+                try:
+                    retry_at = parsedate_to_datetime(retry_after)
+                    if retry_at.tzinfo is None:
+                        retry_at = retry_at.replace(tzinfo=timezone.utc)
+                    return max(
+                        0.0,
+                        min(
+                            (retry_at - datetime.now(timezone.utc)).total_seconds(),
+                            GEMINI_RETRY_MAX_SECONDS,
+                        ),
+                    )
+                except (TypeError, ValueError, OverflowError):
+                    pass
+        ceiling = min(GEMINI_RETRY_MAX_SECONDS, GEMINI_RETRY_BASE_SECONDS * (2**attempt))
+        return self.jitter(0.0, ceiling)
 
     @staticmethod
     def _clean_json(text: str) -> str:

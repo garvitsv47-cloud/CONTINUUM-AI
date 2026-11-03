@@ -36,6 +36,33 @@ class FakeResponse:
 
 
 class GitHubIngestionTests(unittest.TestCase):
+    @staticmethod
+    def _gemini_context():
+        context = Mock()
+        context.owner = "example"
+        context.name = "demo"
+        context.default_branch = "main"
+        context.languages = ["python"]
+        context.files = [Mock(path="app/main.py")]
+        context.excerpts.return_value = [{"path": "app/main.py", "lines": "1-2", "excerpt": "1: app"}]
+        return context
+
+    @staticmethod
+    def _valid_gemini_payload():
+        return {
+            "candidates": [{
+                "content": {"parts": [{"text": json.dumps({
+                    "architecture_summary": "A small web service.",
+                    "modules": [{"name": "app", "purpose": "Application entrypoint.", "evidence": [{"path": "app/main.py", "lines": "1-2"}]}],
+                    "dependencies": [],
+                    "risks": [],
+                    "knowledge_gaps": [],
+                    "interpretations": [],
+                    "verification_items": [],
+                })}]},
+            }],
+        }
+
     def test_valid_repository_is_ingested_with_line_numbered_evidence(self):
         files = {
             "README.md": "# FastAPI\n\nA web framework.",
@@ -176,6 +203,72 @@ class GitHubIngestionTests(unittest.TestCase):
                 model="retired-model",
                 opener=unavailable_model,
             ).analyze(context)
+
+    def test_gemini_retries_transient_503_then_succeeds(self):
+        attempts = 0
+        sleeps = []
+
+        def opener(_request, **_kwargs):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise HTTPError("url", 503, "unavailable", {"Retry-After": "0"}, None)
+            return FakeResponse(self._valid_gemini_payload())
+
+        result = GeminiAnalyzer(
+            api_key="test-key",
+            opener=opener,
+            sleeper=sleeps.append,
+            jitter=lambda _low, _high: 0.0,
+        ).analyze(self._gemini_context())
+        self.assertEqual(result.architecture_summary, "A small web service.")
+        self.assertEqual(attempts, 2)
+        self.assertEqual(sleeps, [0.0])
+
+    def test_gemini_exhausts_retries_for_repeated_503(self):
+        attempts = 0
+        sleeps = []
+
+        def opener(_request, **_kwargs):
+            nonlocal attempts
+            attempts += 1
+            raise HTTPError("url", 503, "unavailable", {}, None)
+
+        with self.assertRaisesRegex(GeminiRequestError, "Gemini request failed \\(503\\)"):
+            GeminiAnalyzer(
+                api_key="test-key",
+                opener=opener,
+                sleeper=sleeps.append,
+                jitter=lambda _low, _high: 0.0,
+            ).analyze(self._gemini_context())
+        self.assertEqual(attempts, 4)
+        self.assertEqual(sleeps, [0.0, 0.0, 0.0])
+
+    def test_gemini_does_not_retry_permanent_errors(self):
+        for code in (400, 404):
+            attempts = 0
+
+            def opener(_request, status=code, **_kwargs):
+                nonlocal attempts
+                attempts += 1
+                raise HTTPError("url", status, "permanent", {}, None)
+
+            with self.subTest(code=code):
+                with self.assertRaises(GeminiRequestError):
+                    GeminiAnalyzer(
+                        api_key="test-key",
+                        model="retired-model",
+                        opener=opener,
+                        sleeper=lambda _delay: self.fail("permanent error was retried"),
+                    ).analyze(self._gemini_context())
+                self.assertEqual(attempts, 1)
+
+    def test_gemini_rejects_malformed_response(self):
+        with self.assertRaisesRegex(GeminiRequestError, "invalid structured analysis"):
+            GeminiAnalyzer(
+                api_key="test-key",
+                opener=lambda *_args, **_kwargs: FakeResponse({"unexpected": "shape"}),
+            ).analyze(self._gemini_context())
 
     def test_gemini_requires_credentials(self):
         with self.assertRaises(GeminiConfigurationError):
