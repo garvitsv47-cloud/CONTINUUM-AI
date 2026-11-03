@@ -1,6 +1,10 @@
 {
   "rewrites": [
     {
+      "source": "/api/projects",
+      "destination": "https://continuum-ai-backend-azly.onrender.com/api/projects/"
+    },
+    {
       "source": "/api/:path*",
       "destination": "https://continuum-ai-backend-azly.onrender.com/api/:path*"
     },
