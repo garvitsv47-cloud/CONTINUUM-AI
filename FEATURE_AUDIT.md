@@ -1,0 +1,45 @@
+# CONTINUUM AI Feature Audit
+
+Tested on 2026-11-03 against:
+
+- Frontend: `http://127.0.0.1:5174/`
+- Backend: `http://127.0.0.1:8001/`
+- Repository used for connection testing: `https://github.com/tiangolo/fastapi`
+
+| Feature | Status | Test performed | Evidence | Remaining work |
+|---|---|---|---|---|
+| Dashboard route | WORKING | Opened `/` in Playwright and verified heading, metrics, workflow steps, and accessible links. | Dashboard rendered successfully. | Replace placeholder handover count when reports exist. |
+| Open workspace navigation | WORKING | Clicked `Open workspace`. | Navigated to `/projects`. | None for current route. |
+| Back to overview navigation | WORKING | Clicked `Back to overview` from `/projects`. | Navigated back to `/`. | None for current route. |
+| Connect repository form | WORKING | Opened form, filled name, URL, and transition context, then submitted. | Project card appeared with submitted values. | Add authenticated repository access for private repositories. |
+| Required project name | WORKING | Submitted without a name. | Client-side required validation prevented submission. | None for current validation. |
+| Repository URL validation | WORKING | Entered `not-a-url` in the URL field. | Native URL validity was false and submission was blocked. | Add server-side GitHub host/repository validation if GitHub-only input is required. |
+| Public GitHub connection | PARTIAL | Connected `https://github.com/tiangolo/fastapi`. | API returned a connected project and analysis later ingested its public files. | Connection itself records the URL; ingestion starts when analysis is requested. |
+| Project list rendering | WORKING | Verified the created project card and status badge. | Card displayed name, URL, description, and `connected` status. | Add pagination/search when persistence is introduced. |
+| Refresh persistence | PARTIAL | Reloaded `/projects` after creating the project. | Project remained visible while the backend process stayed running. | Storage is in-memory and resets on backend restart; add database persistence. |
+| Reconstruct knowledge action | WORKING | Connected `https://github.com/tiangolo/fastapi`, invoked analysis through the live API, and refreshed the browser. | API returned `ready_for_review`; UI displayed `Indexed 250 text files on the master branch`. | Add commit-history ingestion and richer deterministic extraction if required. |
+| Repository file analysis | WORKING | Ran the real `GitHubIngestor` against FastAPI and opened source evidence in the browser. | 250 actual files were indexed; expandable evidence showed `README.md` with line-numbered excerpts. | The archive was capped and reported `truncated=true`; add authenticated large-repository ingestion if needed. |
+| GitHub ingestion security limits | WORKING | Exercised URL validation and ingestion code with unsafe paths, excluded folders/files, file size, file count, and total-content guards. | Only HTTPS `github.com` owner/repository URLs are accepted; binaries, secrets, generated/dependency folders are filtered; limits are enforced. | Add operational metrics and configurable limits. |
+| GitHub API rate-limit handling | WORKING | Real unauthenticated API request returned HTTP 403 during FastAPI verification. | Ingestion fell back to the fixed-host GitHub archive, completed successfully, and preserved the branch/file evidence. | Add optional server-side GitHub token support for higher API quota and richer metadata. |
+| Gemini integration | NOT IMPLEMENTED | Searched backend/frontend implementation and observed network traffic during analysis. | No Gemini SDK, API client, environment setting, or Gemini network request exists. | Add secure server-side Gemini integration with timeout, errors, and grounded prompts. |
+| Evidence references | WORKING | Expanded `View source evidence (250 files)` in the browser. | Evidence includes real paths such as `README.md`, line ranges, and line-numbered excerpts. | Link each individual interpretation to a claim-specific evidence set. |
+| Review controls | NOT IMPLEMENTED | Inspected the post-analysis page for approve, reject, edit, or verification controls. | Only static Observed, Interpreted, and Verify cards are rendered. | Add claim-level review state and human verification actions. |
+| Handover export | NOT IMPLEMENTED | Inspected available buttons and links after analysis. | No report generation or export control is present. | Add structured handover report generation and download/export. |
+| Console errors after current-server reload | WORKING | Reloaded `/projects` with Playwright listeners for console errors and failed requests. | `consoleErrors: []`, `failed: []`. | Investigate any errors from stale server processes separately; current servers are clean. |
+| Frontend build | WORKING | Ran `npm run build`. | TypeScript and Vite production build passed. | None identified. |
+| Frontend lint | WORKING | Ran `npm run lint`. | ESLint passed. | None identified. |
+| Backend validation | WORKING | Ran `unittest discover -s tests -v`, Python compilation, and live HTTP checks. | 7 backend tests passed; prior live ingestion returned `ready_for_review`, `file_count=250`, `evidence=250`, and `truncated=True`. | Add HTTP-level tests once an HTTP test client dependency is intentionally added. |
+| Development server readiness | WORKING | Reused the existing long-lived Vite and Uvicorn processes; issued bounded HTTP checks. | `GET http://127.0.0.1:5174/` returned `200`; `GET http://127.0.0.1:8001/api/health` returned `200`. | Do not start duplicate servers on these occupied ports. |
+| API HTTP workflow | PARTIAL | Created/listed projects and triggered the pre-Gemini analysis flow through HTTP requests. | API returned `created=E2E audit project listed=2 analysis=ready_for_review` before Gemini was added. | Re-run full HTTP analysis with a configured Gemini key; current environment cannot complete that live step. |
+| Backend automated tests | WORKING | Added and ran the dependency-free ingestion test suite with `unittest discover -s tests -v`. | 4 tests passed: valid ingestion, invalid URLs, unavailable repositories, and ingestion failure handling. | Add HTTP-level tests once an HTTP test client dependency is intentionally added. |
+| Gemini integration implementation | PARTIAL | Inspected environment and ran mocked Gemini analyzer tests. | Backend reads `GEMINI_API_KEY` only; REST request, timeout/rate-limit handling, strict Pydantic JSON validation, and repository evidence validation are implemented. | Live API request is pending because this environment has no `GEMINI_API_KEY`; no live Gemini success can be claimed. |
+| Gemini mocked response handling | WORKING | Ran `unittest discover -s tests -v` with mocked Gemini responses. | 7 tests passed, including valid structured output, missing credentials, and unknown evidence rejection. | Add live integration test with a secured key in deployment CI. |
+| Gemini live request | NOT TESTED | Checked `GEMINI_API_KEY` presence without printing its value and attempted a bounded live API flow. | `GEMINI_API_KEY_SET=False`; live Gemini success cannot be verified in this environment. | Provide a key through the backend environment and rerun analysis; never place it in frontend code. |
+| Browser form close control | NOT TESTED | A bounded Playwright interaction was attempted after navigating from the dashboard. | The automation timed out locating the dashboard link despite the link being present in the accessibility snapshot; no product defect was established. | Re-run with a fresh browser page if this control requires additional certification. |
+| Premium landing experience | WORKING | Opened `/` in the browser after the redesign. | Hero headline, working workspace CTA, product preview, workflow steps, capability cards, and footer rendered successfully. | Add authenticated user identity when authentication exists. |
+| Premium workspace experience | WORKING | Opened `/projects`, opened the connect form, and submitted a real FastAPI repository project. | Workspace rendered dark command-center styling; `Premium demo` appeared with the repository URL and connected status. | Add a dedicated project detail route when persistence/report endpoints exist. |
+| Report copy and print controls | PARTIAL | Implemented controls on analyzed project cards and added print media styling. | Copy and native print actions are wired in the frontend. | Browser verification requires a completed Gemini analysis, unavailable without `GEMINI_API_KEY`. |
+
+## Overall conclusion
+
+The current UI and API path performs genuine public GitHub ingestion with safety limits and real line-numbered file evidence. Gemini integration is implemented server-side and covered by mocked tests, but live Gemini success is pending because `GEMINI_API_KEY` is unavailable in this environment. Commit history, review controls, and handover export remain unimplemented. Projects remain in-memory and reset when the backend restarts.

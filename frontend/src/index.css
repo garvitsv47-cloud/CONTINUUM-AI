@@ -1,0 +1,95 @@
+
+@import "tailwindcss";
+
+:root {
+  color: #f4f2f8;
+  background: #0a0910;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  --surface-page: #0a0910;
+  --surface-card: #12111a;
+  --surface-muted: #181622;
+  --surface-elevated: #1b1926;
+  --text-primary: #f4f2f8;
+  --text-secondary: #a7a3b5;
+  --text-muted: #706b7f;
+  --border-subtle: #292635;
+  --action: #7c6ce5;
+  --action-hover: #9588ef;
+  --accent-soft: #211d3c;
+  --success: #73b89b;
+  --warning: #d3a66e;
+  --error: #df8585;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  background:
+    radial-gradient(circle at 75% -10%, rgba(124, 108, 229, 0.13), transparent 34rem),
+    var(--surface-page);
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+.field-control {
+  display: block;
+  width: 100%;
+  margin-top: 0.5rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 0.5rem;
+  background: #0d0c14;
+  padding: 0.7rem 0.85rem;
+  color: var(--text-primary);
+}
+
+.field-control::placeholder {
+  color: var(--text-muted);
+}
+
+.field-control:focus {
+  border-color: var(--action);
+  outline: 3px solid rgba(124, 108, 229, 0.18);
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  outline: 3px solid rgba(149, 136, 239, 0.35);
+  outline-offset: 2px;
+}
+
+@media print {
+  body {
+    background: white;
+    color: #111827;
+  }
+
+  nav,
+  footer,
+  button,
+  form,
+  a[href] {
+    display: none !important;
+  }
+
+  article,
+  details {
+    border-color: #d1d5db;
+    background: white;
+    color: #111827;
+    box-shadow: none;
+  }
+}
