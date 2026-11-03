@@ -1,3 +1,4 @@
+import logging
 import os
 from datetime import datetime
 from typing import Any
@@ -5,6 +6,9 @@ from typing import Any
 import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
+
+
+logger = logging.getLogger(__name__)
 
 
 class ProjectStoreError(Exception):
@@ -15,6 +19,38 @@ class ProjectStoreConfigurationError(ProjectStoreError):
     pass
 
 
+class _DatabaseDiagnostic(Exception):
+    pass
+
+
+def _database_error_category(error: psycopg.Error) -> str:
+    sqlstate = getattr(error, "sqlstate", None) or ""
+    if sqlstate.startswith("28"):
+        return "authentication_failure"
+    if sqlstate == "42501":
+        return "permission_denied"
+    if sqlstate == "42P01":
+        return "missing_table"
+    if isinstance(error, psycopg.errors.OperationalError):
+        message = str(error).lower()
+        if "ssl" in message or "certificate" in message:
+            return "ssl_failure"
+        return "network_or_connection_failure"
+    if isinstance(error, psycopg.errors.ProgrammingError):
+        return "sql_or_schema_error"
+    return "database_error"
+
+
+def _raise_database_error(operation: str, error: psycopg.Error, message: str) -> None:
+    category = _database_error_category(error)
+    logger.exception(
+        "project store database operation failed",
+        extra={"operation": operation, "category": category},
+        exc_info=(type(error), _DatabaseDiagnostic(category), None),
+    )
+    raise ProjectStoreError(message) from error
+
+
 class ProjectStore:
     def __init__(self, database_url: str | None = None):
         self.database_url = database_url
@@ -22,6 +58,10 @@ class ProjectStore:
     def _connection(self):
         database_url = self.database_url or os.getenv("DATABASE_URL")
         if not database_url:
+            logger.error(
+                "project store database configuration failed",
+                extra={"operation": "connect", "category": "missing_database_url"},
+            )
             raise ProjectStoreConfigurationError(
                 "Project persistence is unavailable because DATABASE_URL is not configured."
             )
@@ -42,7 +82,7 @@ class ProjectStore:
                 ).fetchone()
             return self._with_analysis(row)
         except psycopg.Error as error:
-            raise ProjectStoreError("Unable to save the project.") from error
+            _raise_database_error("create_project", error, "Unable to save the project.")
 
     def list(self) -> list[dict[str, Any]]:
         try:
@@ -58,7 +98,7 @@ class ProjectStore:
                 ).fetchall()
             return [self._normalize(row) for row in rows]
         except psycopg.Error as error:
-            raise ProjectStoreError("Unable to load projects.") from error
+            _raise_database_error("list_projects", error, "Unable to load projects.")
 
     def get(self, project_id: str) -> dict[str, Any] | None:
         try:
@@ -75,7 +115,7 @@ class ProjectStore:
                 ).fetchone()
             return self._normalize(row) if row else None
         except psycopg.Error as error:
-            raise ProjectStoreError("Unable to load the project.") from error
+            _raise_database_error("get_project", error, "Unable to load the project.")
 
     def update_status(self, project_id: str, status: str) -> None:
         try:
@@ -85,7 +125,7 @@ class ProjectStore:
                     (status, project_id),
                 )
         except psycopg.Error as error:
-            raise ProjectStoreError("Unable to update project status.") from error
+            _raise_database_error("update_project_status", error, "Unable to update project status.")
 
     def save_analysis(self, project_id: str, analysis: dict[str, Any]) -> None:
         try:
@@ -104,7 +144,7 @@ class ProjectStore:
                     (project_id, Jsonb(analysis)),
                 )
         except psycopg.Error as error:
-            raise ProjectStoreError("Unable to save project analysis.") from error
+            _raise_database_error("save_project_analysis", error, "Unable to save project analysis.")
 
     def _with_analysis(self, row: dict[str, Any]) -> dict[str, Any]:
         result = self._normalize(row)

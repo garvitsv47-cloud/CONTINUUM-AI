@@ -1,6 +1,8 @@
 import unittest
 from unittest.mock import patch
 
+import psycopg
+
 from app.projects import (
     Analysis,
     ProjectCreate,
@@ -9,7 +11,12 @@ from app.projects import (
     list_projects,
     _analyze_project,
 )
-from app.project_store import ProjectStore, ProjectStoreConfigurationError
+from app.project_store import (
+    ProjectStore,
+    ProjectStoreConfigurationError,
+    ProjectStoreError,
+    _database_error_category,
+)
 
 
 class FakeProjectStore:
@@ -143,8 +150,10 @@ class ProjectPersistenceTests(unittest.TestCase):
             _find_project("missing")
 
     def test_database_configuration_failure_is_explicit(self):
-        with self.assertRaisesRegex(ProjectStoreConfigurationError, "DATABASE_URL"):
-            ProjectStore(database_url="").list()
+        with self.assertLogs("app.project_store", level="ERROR") as logs:
+            with self.assertRaisesRegex(ProjectStoreConfigurationError, "DATABASE_URL"):
+                ProjectStore(database_url="").list()
+        self.assertEqual(logs.records[0].category, "missing_database_url")
 
     def test_database_store_uses_parameterized_queries(self):
         row = {
@@ -162,6 +171,33 @@ class ProjectPersistenceTests(unittest.TestCase):
         self.assertEqual(stored["id"], "project-1")
         self.assertIn("VALUES (%(id)s", connection.calls[0][0])
         self.assertEqual(connection.calls[0][1]["id"], "project-1")
+
+    def test_database_errors_are_classified_without_connection_details(self):
+        self.assertEqual(
+            _database_error_category(psycopg.OperationalError("connection refused")),
+            "network_or_connection_failure",
+        )
+        self.assertEqual(
+            _database_error_category(psycopg.OperationalError("SSL certificate verify failed")),
+            "ssl_failure",
+        )
+        self.assertEqual(
+            _database_error_category(psycopg.errors.InsufficientPrivilege()),
+            "permission_denied",
+        )
+
+    def test_database_failure_is_logged_and_returns_generic_error(self):
+        error = psycopg.OperationalError("password=secret host=db.example")
+        with patch("app.project_store.psycopg.connect", side_effect=error), self.assertLogs(
+            "app.project_store",
+            level="ERROR",
+        ) as logs:
+            with self.assertRaisesRegex(ProjectStoreError, "Unable to load projects"):
+                ProjectStore("postgresql://redacted").list()
+
+        self.assertIn("network_or_connection_failure", logs.output[0])
+        self.assertNotIn("password=secret", logs.output[0])
+        self.assertNotIn("db.example", logs.output[0])
 
 
 if __name__ == "__main__":
