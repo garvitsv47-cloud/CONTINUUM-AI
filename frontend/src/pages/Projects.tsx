@@ -1,6 +1,6 @@
 import { type FormEvent, type ReactNode, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { apiUrl } from '../lib/api'
+import { apiUrl, readJsonResponse } from '../lib/api'
 import {
   ArrowLeft,
   CheckCircle2,
@@ -56,10 +56,7 @@ export default function Projects() {
 
   useEffect(() => {
     fetch(apiUrl('/api/projects/'))
-      .then(async (response) => {
-        if (!response.ok) throw new Error('Unable to load projects')
-        return response.json()
-      })
+      .then((response) => readJsonResponse<{ projects: Project[] }>(response))
       .then((data) => setProjects(data.projects))
       .catch(() => setError('Unable to load projects. Check that the backend is running.'))
       .finally(() => setIsLoading(false))
@@ -86,8 +83,7 @@ export default function Projects() {
           repository_url: form.repository_url.trim(),
         }),
       })
-      const data = await response.json()
-      if (!response.ok) throw new Error(data.detail ?? 'Unable to create project')
+      const data = await readJsonResponse<{ project: Project }>(response)
       setProjects((current) => [data.project, ...current])
       setForm(initialForm)
       setShowForm(false)
@@ -103,8 +99,7 @@ export default function Projects() {
     setError('')
     try {
       const response = await fetch(apiUrl(`/api/projects/${projectId}/analyze`), { method: 'POST' })
-      const data = await response.json()
-      if (!response.ok) throw new Error(data.detail ?? 'Analysis could not be completed.')
+      const data = await readJsonResponse<Analysis>(response)
       const analysis = data as Analysis
       setProjects((current) =>
         current.map((project) =>

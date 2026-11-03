@@ -12,7 +12,7 @@ import {
   Sparkles,
 } from 'lucide-react'
 import { Link } from 'react-router-dom'
-import { apiUrl } from '../lib/api'
+import { apiUrl, readJsonResponse } from '../lib/api'
 
 type Project = {
   id: string
@@ -29,10 +29,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     fetch(apiUrl('/api/projects/'))
-      .then(async (response) => {
-        if (!response.ok) throw new Error('Unable to load projects')
-        return response.json()
-      })
+      .then((response) => readJsonResponse<{ projects: Project[] }>(response))
       .then((data) => setProjects(data.projects))
       .catch(() => setProjects([]))
       .finally(() => setIsLoading(false))
