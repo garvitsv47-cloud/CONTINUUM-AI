@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field, ValidationError
 from app.github_ingestion import RepositoryContext
 
 
-GEMINI_MODEL = "gemini-2.0-flash"
+DEFAULT_GEMINI_MODEL = "gemini-3.6-flash"
 GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models"
 GEMINI_TIMEOUT_SECONDS = 45
 MAX_PROMPT_CHARS = 120_000
@@ -62,6 +62,7 @@ class GeminiRepositoryAnalysis(BaseModel):
 @dataclass(frozen=True)
 class GeminiAnalyzer:
     api_key: str | None = None
+    model: str | None = None
     opener: Any = urlopen
 
     def analyze(self, context: RepositoryContext) -> GeminiRepositoryAnalysis:
@@ -78,7 +79,8 @@ class GeminiAnalyzer:
                 "responseMimeType": "application/json",
             },
         }
-        endpoint = f"{GEMINI_ENDPOINT}/{quote(GEMINI_MODEL, safe='')}:generateContent?key={quote(key)}"
+        model = self.model or os.getenv("GEMINI_MODEL") or DEFAULT_GEMINI_MODEL
+        endpoint = f"{GEMINI_ENDPOINT}/{quote(model, safe='')}:generateContent?key={quote(key)}"
         request = Request(
             endpoint,
             data=json.dumps(payload).encode("utf-8"),
@@ -97,6 +99,10 @@ class GeminiAnalyzer:
                 raise GeminiRequestError("Gemini rejected the configured API key.") from error
             if error.code == 429:
                 raise GeminiRequestError("Gemini rate limit reached. Try again later.") from error
+            if error.code == 404:
+                raise GeminiRequestError(
+                    f"Gemini model '{model}' is unavailable for generateContent."
+                ) from error
             raise GeminiRequestError(f"Gemini request failed ({error.code}).") from error
         except (URLError, TimeoutError, OSError) as error:
             raise GeminiRequestError("Gemini could not be reached before the timeout.") from error

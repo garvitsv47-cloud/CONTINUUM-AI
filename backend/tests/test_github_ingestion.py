@@ -1,6 +1,7 @@
 import json
 import unittest
 from unittest.mock import Mock
+from urllib.error import HTTPError
 
 from pydantic import ValidationError
 
@@ -9,7 +10,12 @@ from app.github_ingestion import (
     RepositoryIngestionError,
     parse_github_url,
 )
-from app.gemini_analysis import GeminiAnalyzer, GeminiConfigurationError, GeminiRequestError
+from app.gemini_analysis import (
+    DEFAULT_GEMINI_MODEL,
+    GeminiAnalyzer,
+    GeminiConfigurationError,
+    GeminiRequestError,
+)
 from app.projects import ProjectCreate, _analyze_project, projects
 
 
@@ -135,9 +141,41 @@ class GitHubIngestionTests(unittest.TestCase):
             }],
         }
 
-        result = GeminiAnalyzer(api_key="test-key", opener=lambda *_args, **_kwargs: FakeResponse(payload)).analyze(context)
+        requests = []
+        result = GeminiAnalyzer(
+            api_key="test-key",
+            opener=lambda request, **_kwargs: (
+                requests.append(request) or FakeResponse(payload)
+            ),
+        ).analyze(context)
         self.assertEqual(result.modules[0].evidence[0].path, "app/main.py")
         self.assertIn("Deployment", result.knowledge_gaps[0])
+        self.assertIn(
+            f"/models/{DEFAULT_GEMINI_MODEL}:generateContent",
+            requests[0].full_url,
+        )
+
+    def test_gemini_model_404_is_reported_as_model_configuration_error(self):
+        context = Mock()
+        context.owner = "example"
+        context.name = "demo"
+        context.default_branch = "main"
+        context.languages = []
+        context.excerpts.return_value = []
+        context.files = []
+
+        def unavailable_model(_request, **_kwargs):
+            raise HTTPError("url", 404, "not found", {}, None)
+
+        with self.assertRaisesRegex(
+            GeminiRequestError,
+            "Gemini model 'retired-model' is unavailable",
+        ):
+            GeminiAnalyzer(
+                api_key="test-key",
+                model="retired-model",
+                opener=unavailable_model,
+            ).analyze(context)
 
     def test_gemini_requires_credentials(self):
         with self.assertRaises(GeminiConfigurationError):
