@@ -32,13 +32,9 @@ The application builds and the existing local API workflow is intact. Projects a
 
 ### Vercel frontend
 
-Set:
-
-```text
-VITE_API_URL=https://<your-backend-domain>
-```
-
-Use the backend origin only, without `/api`. Vite exposes only variables prefixed with `VITE_` to browser code.
+No frontend API environment variable is required. The frontend uses relative
+`/api` paths. Local development uses the Vite proxy, while production uses
+`frontend/vercel.json` to proxy those paths to the Render backend.
 
 ### FastAPI backend
 
@@ -64,9 +60,9 @@ Never put `GEMINI_API_KEY` in Vercel or frontend environment variables.
 1. Import the repository into Vercel.
 2. Set **Root Directory** to `frontend`.
 3. Keep the framework preset as Vite.
-4. Set `VITE_API_URL` to the deployed FastAPI origin.
-5. Deploy.
-6. Verify `/` and `/projects` directly; `frontend/vercel.json` handles SPA routing.
+4. Deploy.
+5. Verify `/`, `/projects`, and `/api/health`; `frontend/vercel.json` handles both
+   the API proxy and SPA routing.
 
 ### Backend
 
@@ -88,7 +84,9 @@ GET https://<your-backend-domain>/api/health
 ## Remaining blockers
 
 - Configure and live-test `GEMINI_API_KEY`.
-- Deploy a backend with a stable public HTTPS origin.
-- Set the exact deployed frontend origin in `CORS_ORIGINS`.
+- Keep the Render backend URL in `frontend/vercel.json` synchronized with the
+  deployed backend.
+- `CORS_ORIGINS` is only required for direct cross-origin browser requests.
+  The Vercel rewrite keeps production browser requests same-origin.
 - Replace in-memory project storage before treating the service as production-grade.
 - Add authentication and private repository support if required.
